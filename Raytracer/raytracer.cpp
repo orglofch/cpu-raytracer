@@ -198,9 +198,9 @@ void ColourForIntersection(SimulationState &state, const Intersection &intersect
 		ret_col += intersection.material.specular * phong_coeff * light_colour;
 	}
 	if (!IsBlack(intersection.material.specular)) {
-		//Colour refl_colour;
-		//CastRay(state, refl_ray, &refl_colour);
-		//ret_col += intersection.material.specular * refl_colour;
+		Colour refl_colour;
+		CastRay(state, refl_ray, &refl_colour);
+		ret_col += intersection.material.specular * refl_colour;
 	}
 	*colour = ret_col;
 }
