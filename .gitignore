@@ -1,0 +1,10 @@
+*.opensdf
+*.sdf
+*.v12.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+Debug/*
+Release/*
+Raytracer/Debug/*
+Raytracer/Release/*
