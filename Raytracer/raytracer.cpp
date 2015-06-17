@@ -50,6 +50,9 @@ struct SimulationState
 	Colour ambient;
 
 	Sphere sphere[5];
+
+	int max_aa_iterations;
+	int max_reflection_iterations;
 };
 
 struct Ray
@@ -184,25 +187,35 @@ bool IsBlack(const Colour &c) {
 void CastRay(SimulationState &state, const Ray &ray, Colour *colour);
 
 void ColourForIntersection(SimulationState &state, const Intersection &intersection, const Ray &ray, Colour *colour) {
-	Colour ret_col = state.ambient * intersection.material.diffuse;
-
-	Ray refl_ray = ReflectRay(ray, intersection.pos, intersection.normal);
-	double phong_coeff = pow(max(0.0, intersection.normal.dot(refl_ray.dir)), intersection.material.shininess);
+	Colour col = state.ambient * intersection.material.diffuse;
 
 	for (int i = 0; i < 2; ++i) {
 		Vector3 light_dir = state.light[i].pos - intersection.pos;
 		light_dir.normalize();
 
+		Vector3 bisector = (state.eye - intersection.pos) + light_dir;
+		bisector.normalize();
+
+		double spec_angle = max(intersection.normal.dot(bisector), 0.0);
+		double specular = pow(spec_angle, intersection.material.shininess);
+		double lambertian = max(intersection.normal.dot(light_dir), 0.0);
+
 		Colour light_colour = DirectLight(state, intersection, state.light[i]);
-		ret_col += intersection.material.diffuse * max(0.0, intersection.normal.dot(light_dir)) * light_colour;
-		ret_col += intersection.material.specular * phong_coeff * light_colour;
+
+		if (lambertian > 0.0) {
+			col += (lambertian * intersection.material.diffuse +
+				specular * intersection.material.specular) * light_colour;
+		} else {
+			col += (lambertian * intersection.material.diffuse) * light_colour;
+		}
 	}
 	if (!IsBlack(intersection.material.specular)) {
+		Ray refl_ray = ReflectRay(ray, intersection.pos, intersection.normal);
 		Colour refl_colour;
 		CastRay(state, refl_ray, &refl_colour);
-		ret_col += intersection.material.specular * refl_colour;
+		col += intersection.material.specular * refl_colour;
 	}
-	*colour = ret_col;
+	*colour = col;
 }
 
 void CastRay(SimulationState &state, const Ray &ray, Colour *colour) {
@@ -216,17 +229,77 @@ void CastRay(SimulationState &state, const Ray &ray, Colour *colour) {
 	}
 }
 
-void TracePixel(SimulationState &state, Point3 pixel, Image *image) {
-	Point3 p_world = state.pixel_to_world_matrix * pixel;
+Colour TraceArea(SimulationState &state, const Point3 &center, double size, int iteration) {
+	Point3 pixel1 = center + Vector3(-size / 2, -size / 2, 0);
+	Point3 pixel2 = center + Vector3(size / 2, -size / 2, 0);
+	Point3 pixel3 = center + Vector3(-size / 2, size / 2, 0);
+	Point3 pixel4 = center + Vector3(size / 2, size / 2, 0);
+	Point3 pixel5 = center;
 
-	Vector3 direction = (p_world - state.eye);
-	direction.normalize();
-	Ray ray(state.eye, direction);
+	Point3 p_world1 = state.pixel_to_world_matrix * pixel1;
+	Point3 p_world2 = state.pixel_to_world_matrix * pixel2;
+	Point3 p_world3 = state.pixel_to_world_matrix * pixel3;
+	Point3 p_world4 = state.pixel_to_world_matrix * pixel4;
+	Point3 p_world5 = state.pixel_to_world_matrix * pixel5;
 
+	Vector3 dir1 = (p_world1 - state.eye);
+	Vector3 dir2 = (p_world2 - state.eye);
+	Vector3 dir3 = (p_world3 - state.eye);
+	Vector3 dir4 = (p_world4 - state.eye);
+	Vector3 dir5 = (p_world5 - state.eye);
+	dir1.normalize();
+	dir2.normalize();
+	dir3.normalize();
+	dir4.normalize();
+	dir5.normalize();
+
+	Ray ray1(state.eye, dir1);
+	Ray ray2(state.eye, dir2);
+	Ray ray3(state.eye, dir3);
+	Ray ray4(state.eye, dir4);
+	Ray ray5(state.eye, dir5);
+
+	Colour colour1;
+	CastRay(state, ray1, &colour1);
+	Colour colour2;
+	CastRay(state, ray2, &colour2);
+	Colour colour3;
+	CastRay(state, ray3, &colour3);
+	Colour colour4;
+	CastRay(state, ray4, &colour4);
+	Colour colour5;
+	CastRay(state, ray5, &colour5);
+
+	Colour diff_col1 = colour1 - colour5;
+	Colour diff_col2 = colour2 - colour5;
+	Colour diff_col3 = colour3 - colour5;
+	Colour diff_col4 = colour4 - colour5;
+
+	float diff1 = abs(diff_col1.r) + abs(diff_col1.g) + abs(diff_col1.b);
+	float diff2 = abs(diff_col2.r) + abs(diff_col2.g) + abs(diff_col2.b);
+	float diff3 = abs(diff_col3.r) + abs(diff_col3.g) + abs(diff_col3.b);
+	float diff4 = abs(diff_col4.r) + abs(diff_col4.g) + abs(diff_col4.b);
+
+	if (diff1 > 0.01 && iteration < state.max_aa_iterations) {
+		colour1 = TraceArea(state, center + Vector3(-size / 4, -size / 4, 0), size / 2, iteration + 1);
+	}
+	if (diff2 > 0.01 && iteration < state.max_aa_iterations) {
+		colour2 = TraceArea(state, center + Vector3(size / 4, -size / 4, 0), size / 2, iteration + 1);
+	}
+	if (diff3 > 0.01 && iteration < state.max_aa_iterations) {
+		colour3 = TraceArea(state, center + Vector3(-size / 4, size / 4, 0), size / 2, iteration + 1);
+	}
+	if (diff4 > 0.01 && iteration < state.max_aa_iterations) {
+		colour4 = TraceArea(state, center + Vector3(size / 4, size / 4, 0), size / 2, iteration + 1);
+	}
+
+	return (colour1 + colour2 + colour3 + colour4 + colour5) / 5;
+}
+
+void TracePixel(SimulationState &state, const Point3 &pixel, double size, Image *image) {
 	int index = DataIndex(image->width, image->height, image->channels, pixel.x, pixel.y, 0);
 
-	Colour colour;
-	CastRay(state, ray, &colour);
+	Colour colour = TraceArea(state, pixel, 0.5, 1);
 	image->data[index + 0] = colour.r;
 	image->data[index + 1] = colour.g;
 	image->data[index + 2] = colour.b;
@@ -235,7 +308,7 @@ void TracePixel(SimulationState &state, Point3 pixel, Image *image) {
 void Trace(SimulationState &state, Image *image) {
 	for (unsigned int c = 0; c < image->width; ++c) {
 		for (unsigned int r = 0; r < image->height; ++r) {
-			TracePixel(state, { (int)c, (int)r, 0 }, image);
+			TracePixel(state, { (float)c + 0.5, (float)r + 0.5, 0.0f }, 1, image); // TODO(orglofch): Possibly add 0.5 to pixel
 		}
 	}
 }
@@ -243,7 +316,7 @@ void Trace(SimulationState &state, Image *image) {
 int main(int argc, char **argv) {
 	srand(time(NULL));
 
-	string output_file = "output.png";
+	string output_file = "output1.png";
 
 	SimulationState state;
 	state.eye = { 0.0, 0.0, 800.0 };
@@ -251,6 +324,9 @@ int main(int argc, char **argv) {
 	state.up = { 0.0, 1.0, 0.0 };
 	state.fov = 50;
 	state.ambient = { 0.3f, 0.3f, 0.3f };
+
+	state.max_aa_iterations = 5;
+	state.max_reflection_iterations = 4;
 
 	state.light[0].pos = { -100, 150, 400 };
 	state.light[0].colour = { 0.9f, 0.9f, 0.9f };

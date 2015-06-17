@@ -287,6 +287,11 @@ Vector3 operator * (const double s, const Vector3 &v) {
 	return v * s;
 }
 
+inline
+Vector3 operator + (const Vector3 &a, const Vector3 &b) {
+	return Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
 union Point3
 {
 	Point3() {
@@ -366,6 +371,11 @@ Vector3 operator - (const Vector3 &a, const Vector3 &b) {
 inline
 Point3 operator + (const Point3 &p, const Vector3 &v) {
 	return Point3(p.x + v.x, p.y + v.y, p.z + v.z);
+}
+
+inline
+Point3 operator - (const Point3 &p, const Vector3 &v) {
+	return Point3(p.x - v.x, p.y - v.y, p.z - v.z);
 }
 
 // TODO(orglofch): Remove

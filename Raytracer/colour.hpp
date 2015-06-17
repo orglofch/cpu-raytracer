@@ -12,18 +12,24 @@ union Colour
 		b = _b;
 	}
 
+	void operator +=(const Colour &other) {
+		r += other.r;
+		g += other.g;
+		b += other.b;
+	}
+
+	void operator /=(const float s) {
+		r /= s;
+		g /= s;
+		b /= s;
+	}
+
 	float &operator [] (int i) {
 		return d[i];
 	}
 
 	float operator [] (int i) const {
 		return d[i];
-	}
-
-	void operator +=(const Colour &other) {
-		r += other.r;
-		g += other.g;
-		b += other.b;
 	}
 
 	struct
@@ -45,8 +51,23 @@ Colour operator *(const Colour &c, const float s) {
 }
 
 inline
+Colour operator *(const float s, const Colour &c) {
+	return c * s;
+}
+
+inline
 Colour operator +(const Colour &a, const Colour &b) {
-	return Colour(a.r + b.r, a.g + b.g, a.b + b.b); // TODO(orglofch): Possibly clamp
+	return Colour(a.r + b.r, a.g + b.g, a.b + b.b);
+}
+
+inline
+Colour operator /(const Colour &c, const float s) {
+	return Colour(c.r / s, c.g / s, c.b / s);
+}
+
+inline
+Colour operator -(const Colour &a, const Colour &b) {
+	return Colour(a.r - b.r, a.g - b.g, a.b - b.b);
 }
 
 #endif
