@@ -1,3 +1,7 @@
+#include <GL/glew.h>
+#include <GLFW\glfw3.h>
+
+#include <boost\thread.hpp>
 #include <cstdlib>
 #include <ctime>
 #include <limits>
@@ -5,6 +9,9 @@
 #include "algebra.hpp"
 #include "colour.hpp"
 #include "image_util.hpp"
+#include "gl_util.hpp"
+#include "mesh_util.hpp"
+#include "primitive_util.hpp"
 #include "util.hpp"
 
 using namespace std;
@@ -14,26 +21,6 @@ struct Light
 	Point3 pos;
 	Colour colour;
 	Vector3 falloff;
-};
-
-struct Material
-{
-	Material() : shininess(0) {}
-
-	Colour diffuse;
-	Colour specular;
-	float shininess;
-};
-
-struct Sphere
-{
-	Sphere() : radius(0) {}
-	Sphere(const Point3 &p, double rad) : pos(p), radius(rad) {}
-
-	Point3 pos;
-	double radius;
-
-	Material material;
 };
 
 struct SimulationState
@@ -53,82 +40,43 @@ struct SimulationState
 
 	int max_aa_iterations;
 	int max_reflection_iterations;
+
+	int thread_space_divisions;
+
+	Texture image_texture;
 };
 
-struct Ray
-{
-	Ray(const Point3 &p, const Vector3 &d) : origin(p), dir(d) {}
-
-	Point3 origin;
-	Vector3 dir;
-};
-
-struct Intersection
-{
-	Point3 pos;
-	Vector3 normal;
-	double t;
-
-	Material material;
-};
-
-Point3 RayProjection(const Ray &ray, float t) {
-	return ray.origin + t * (ray.dir);
+void error_callback(int error, const char *description) {
+	fputs(description, stderr);
 }
 
-bool SphereIntersect(const Sphere &sphere, const Ray &ray, Intersection *intersection) {
-	double A = ray.dir.dot(ray.dir);
-	Vector3 origin = ray.origin - sphere.pos;
-	double B = 2 * (ray.dir.dot(origin));
-	double C = origin.dot(origin) - sphere.radius * sphere.radius;
-
-	float disc = B*B - 4 * A * C;
-	if (disc < 0) {
-		return false;
+void key_callback(GLFWwindow* window, int key, int scan_code, int action, int mods) {
+	SimulationState *state = (SimulationState*)glfwGetWindowUserPointer(window);
+	switch (key)
+	{
+		case GLFW_KEY_ESCAPE:
+			glfwSetWindowShouldClose(window, GL_TRUE);
+			break;
 	}
+}
 
-	double roots[2];
-	unsigned int num_roots = quadraticRoots(A, B, C, roots);
+void cursor_position_callback(GLFWwindow *window, double x_pos, double y_pos) {
+	SimulationState *state = (SimulationState*)glfwGetWindowUserPointer(window);
+}
 
-	if (num_roots == 1) {
-		intersection->pos = RayProjection(ray, roots[0]);
-		intersection->normal = intersection->pos - sphere.pos;
-		intersection->normal.normalize();
-		intersection->t = roots[0];
-		intersection->material = sphere.material;
-	} else if (num_roots == 2) {
-		if (roots[0] > roots[1]) {
-			double tmp = roots[0];
-			roots[0] = roots[1];
-			roots[1] = tmp;
-		}
-		if (roots[1] < 0) {
-			return false;
-		}
-		if (roots[0] < 0 && roots[1] > EPSILON) {
-			intersection->pos = RayProjection(ray, roots[1]);
-			intersection->normal = intersection->pos - sphere.pos;
-			intersection->normal.normalize();
-			intersection->t = roots[1];
-			intersection->material = sphere.material;
-			return true;
-		} else if (roots[0] > EPSILON) {
-			intersection->pos = RayProjection(ray, roots[0]);
-			intersection->normal = intersection->pos - sphere.pos;
-			intersection->normal.normalize();
-			intersection->t = roots[0];
-			intersection->material = sphere.material;
-			return true;
-		}
-	}
-	return false;
+void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
+	SimulationState *state = (SimulationState*)glfwGetWindowUserPointer(window);
+}
+
+void mouse_scroll_callback(GLFWwindow *window, double x_offset, double y_offset) {
+	SimulationState *state = (SimulationState*)glfwGetWindowUserPointer(window);
 }
 
 bool FindIntersection(SimulationState &state, const Ray &ray, Intersection *intersection) {
 	intersection->t = numeric_limits<double>::max();
 	bool has_intersection = false;
+	Intersection cur_intersection;
 	for (int i = 0; i < 5; ++i) {
-		Intersection cur_intersection;
 		if (SphereIntersect(state.sphere[i], ray, &cur_intersection) && cur_intersection.t < intersection->t) {
 			*intersection = cur_intersection;
 			has_intersection = true;
@@ -280,16 +228,16 @@ Colour TraceArea(SimulationState &state, const Point3 &center, double size, int 
 	float diff3 = abs(diff_col3.r) + abs(diff_col3.g) + abs(diff_col3.b);
 	float diff4 = abs(diff_col4.r) + abs(diff_col4.g) + abs(diff_col4.b);
 
-	if (diff1 > 0.01 && iteration < state.max_aa_iterations) {
+	if (diff1 > 0.1 && iteration < state.max_aa_iterations) {
 		colour1 = TraceArea(state, center + Vector3(-size / 4, -size / 4, 0), size / 2, iteration + 1);
 	}
-	if (diff2 > 0.01 && iteration < state.max_aa_iterations) {
+	if (diff2 > 0.1 && iteration < state.max_aa_iterations) {
 		colour2 = TraceArea(state, center + Vector3(size / 4, -size / 4, 0), size / 2, iteration + 1);
 	}
-	if (diff3 > 0.01 && iteration < state.max_aa_iterations) {
+	if (diff3 > 0.1 && iteration < state.max_aa_iterations) {
 		colour3 = TraceArea(state, center + Vector3(-size / 4, size / 4, 0), size / 2, iteration + 1);
 	}
-	if (diff4 > 0.01 && iteration < state.max_aa_iterations) {
+	if (diff4 > 0.1 && iteration < state.max_aa_iterations) {
 		colour4 = TraceArea(state, center + Vector3(size / 4, size / 4, 0), size / 2, iteration + 1);
 	}
 
@@ -305,12 +253,38 @@ void TracePixel(SimulationState &state, const Point3 &pixel, double size, Image 
 	image->data[index + 2] = colour.b;
 }
 
-void Trace(SimulationState &state, Image *image) {
-	for (unsigned int c = 0; c < image->width; ++c) {
-		for (unsigned int r = 0; r < image->height; ++r) {
-			TracePixel(state, { (float)c + 0.5, (float)r + 0.5, 0.0f }, 1, image); // TODO(orglofch): Possibly add 0.5 to pixel
+void TraceRect(SimulationState &state, unsigned int x, unsigned int y, 
+	unsigned int width, unsigned int height, Image *image) {
+	for (unsigned int c = 0; c < width; ++c) {
+		for (unsigned int r = 0; r < height; ++r) {
+			TracePixel(state, { (float)(c + x) + 0.5, (float)(r + y) + 0.5, 0.0f }, 1, image); // TODO(orglofch): Possibly add 0.5 to pixel
 		}
 	}
+}
+
+void Trace(SimulationState &state, Image *image) {
+	int thread_space_width = image->width / state.thread_space_divisions;
+	int thread_space_height = image->height / state.thread_space_divisions;
+
+	boost::thread_group trace_threads;
+	for (unsigned int c = 0; c < state.thread_space_divisions; ++c) {
+		for (unsigned int r = 0; r < state.thread_space_divisions; ++r) {
+			boost::thread *worker_thread = new boost::thread(TraceRect, state, c * thread_space_width, r * thread_space_height, thread_space_width, thread_space_height, image);
+			trace_threads.add_thread(worker_thread);
+		}
+	}
+	trace_threads.join_all();
+}
+
+void UpdateAndRender(SimulationState &state, Image &image, double dt) {
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	glBindTexture(GL_TEXTURE_2D, state.image_texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, image.width, image.height, 0, GL_RGB,
+		GL_FLOAT, image.data);
+
+	glBindTexture(GL_TEXTURE_2D, state.image_texture);
+	glDrawRect(0, image.width, 0, image.height, -1);
 }
 
 int main(int argc, char **argv) {
@@ -325,7 +299,9 @@ int main(int argc, char **argv) {
 	state.fov = 50;
 	state.ambient = { 0.3f, 0.3f, 0.3f };
 
-	state.max_aa_iterations = 5;
+	state.thread_space_divisions = 5;
+
+	state.max_aa_iterations = 4;
 	state.max_reflection_iterations = 4;
 
 	state.light[0].pos = { -100, 150, 400 };
@@ -367,17 +343,79 @@ int main(int argc, char **argv) {
 	state.sphere[4].material = mat1;
 
 	Image image;
-	image.width = 1024;
-	image.height = 1024;
+	image.width = 480;
+	image.height = 480;
 	image.channels = 3;
-	image.data = new float[image.width * image.height * 3]; // TODO(orglofch): Make implicit
 
 	// TODO(orglofch): Make implicit
 	CreatePixelToWorldMatrix(state.eye, state.view, state.up, state.fov, 
 		image.width, image.height, &state.pixel_to_world_matrix);
 
-	Trace(state, &image);
+	GLFWwindow *window;
+	if (!glfwInit()) {
+		LOG("Failed to initialize glfw\n");
+		exit(EXIT_FAILURE);
+	}
+
+	glfwSetErrorCallback(error_callback);
+
+	window = glfwCreateWindow(image.width, image.height, "RayTracer", NULL, NULL);
+	if (!window) {
+		LOG("Failed to create window\n");
+		glfwTerminate();
+		exit(EXIT_FAILURE);
+	}
+
+	glfwSetWindowUserPointer(window, &state);
+
+	glfwMakeContextCurrent(window);
+	glfwSetKeyCallback(window, key_callback);
+	glfwSetCursorPosCallback(window, cursor_position_callback);
+	glfwSetMouseButtonCallback(window, mouse_button_callback);
+	glfwSetScrollCallback(window, mouse_scroll_callback);
+	glfwSwapInterval(1);
+
+	if (glewInit() != GLEW_OK) {
+		LOG("Failed to initialize glew\n");
+		glfwTerminate();
+		exit(EXIT_FAILURE);
+	}
+
+	glViewport(0, 0, image.width, image.height);
+	glSetOrthographicProjection(0, image.width, 0, image.height, 0.1, 1000);
+
+	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_BLEND);
+
+	image.data = new float[image.width * image.height * 3]; // TODO(orglofch): Make implicit
+	memset(image.data, 0, sizeof(float) * image.width * image.height * 3);
+	glCreateTexture2D(&state.image_texture, image.width, image.height, 3, image.data);
+
+	boost::thread worker_thread(Trace, state, &image);
+	worker_thread.join();
+
+	double time = glfwGetTime();
+	while (!glfwWindowShouldClose(window)) {
+		glfwPollEvents();
+
+		UpdateAndRender(state, image, glfwGetTime() - time);
+
+		glfwSwapBuffers(window);
+
+		while (glfwGetTime() - time < 1.0f / 60) {};
+		time = glfwGetTime();
+	}
+
 	WritePNG(image, output_file);
+
+	glfwDestroyWindow(window);
+	glfwTerminate();
+
+	glDeleteTextures(1, &state.image_texture);
 
 	exit(EXIT_SUCCESS);
 }

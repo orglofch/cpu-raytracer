@@ -9,7 +9,7 @@
 #endif
 
 #define SQRT3	1.732050807568878
-#define EPSILON 0.001
+#define EPSILON 0.0005
 
 #define toRad(a)	a * PI / 180.0
 #define toDeg(r)	r * 180.0 / PI;
