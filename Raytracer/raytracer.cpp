@@ -281,6 +281,7 @@ void TraceRect(SimulationState &state, unsigned int x, unsigned int y,
 	for (unsigned int c = 0; c < width; ++c) {
 		for (unsigned int r = 0; r < height; ++r) {
 			TracePixel(state, { (float)(c + x) + 0.5, (float)(r + y) + 0.5, 0.0f }, 1, image); // TODO(orglofch): Possibly add 0.5 to pixel
+			//boost::this_thread::sleep(boost::posix_time::milliseconds(1));
 		}
 	}
 }
@@ -322,7 +323,7 @@ int main(int argc, char **argv) {
 	state.fov = 50;
 	state.ambient = { 0.3f, 0.3f, 0.3f };
 
-	state.thread_space_divisions = 5;
+	state.thread_space_divisions = 10;
 
 	state.max_aa_iterations = 4;
 	state.max_reflection_iterations = 4;
@@ -366,8 +367,8 @@ int main(int argc, char **argv) {
 	state.sphere[4].material = mat1;
 
 	Image image;
-	image.width = 480;
-	image.height = 480;
+	image.width = 1024;
+	image.height = 1024;
 	image.channels = 3;
 
 	// TODO(orglofch): Make implicit
@@ -419,7 +420,6 @@ int main(int argc, char **argv) {
 	glCreateTexture2D(&state.image_texture, image.width, image.height, 3, image.data);
 
 	boost::thread worker_thread(Trace, state, &image);
-	worker_thread.join();
 
 	double time = glfwGetTime();
 	while (!glfwWindowShouldClose(window)) {
@@ -432,6 +432,8 @@ int main(int argc, char **argv) {
 		while (glfwGetTime() - time < 1.0f / 60) {};
 		time = glfwGetTime();
 	}
+
+	worker_thread.join();
 
 	WritePNG(image, output_file);
 
