@@ -64,7 +64,7 @@ struct SimulationState
 	int max_aa_iterations;
 	int max_reflection_iterations;
 
-	int thread_space_divisions;
+	int trace_thread_count;
 
 	Texture image_texture;
 };
@@ -126,14 +126,12 @@ void CreatePixelToWorldMatrix(const Point3 &eye,
 
 Ray ReflectRay(const Ray &ray, const Point3 &pos, const Vector3 &normal) {
 	Vector3 refl_dir = ray.dir - 2.0 * ray.dir.dot(normal) * normal;
-	refl_dir.normalize();
 	return Ray(pos, refl_dir);
 }
 
 Colour DirectLight(SimulationState &state, const Intersection &intersection, const Light &light) {
 	Vector3 light_dir = light.pos - intersection.pos;
 	double light_dist = light_dir.length();
-	light_dir.normalize();
 
 	Ray light_ray(intersection.pos, light_dir);
 	Intersection light_intersection;
@@ -155,9 +153,9 @@ bool IsBlack(const Colour &c) {
 	return c.r == 0 && c.g == 0 && c.b == 0;
 }
 
-void CastRay(SimulationState &state, const Ray &ray, Colour *colour);
+void CastRay(SimulationState &state, const Ray &ray, int iteration, Colour *colour);
 
-void ColourForIntersection(SimulationState &state, const Intersection &intersection, const Ray &ray, Colour *colour) {
+void ColourForIntersection(SimulationState &state, const Intersection &intersection, const Ray &ray, int iteration, Colour *colour) {
 	Colour col = state.ambient * intersection.material.diffuse;
 
 	for (int i = 0; i < 2; ++i) {
@@ -180,19 +178,19 @@ void ColourForIntersection(SimulationState &state, const Intersection &intersect
 			col += (lambertian * intersection.material.diffuse) * light_colour;
 		}
 	}
-	if (!IsBlack(intersection.material.specular)) {
+	if (!IsBlack(intersection.material.specular) && iteration <= state.max_reflection_iterations) {
 		Ray refl_ray = ReflectRay(ray, intersection.pos, intersection.normal);
 		Colour refl_colour;
-		CastRay(state, refl_ray, &refl_colour);
+		CastRay(state, refl_ray, iteration + 1, &refl_colour);
 		col += intersection.material.specular * refl_colour;
 	}
 	*colour = col;
 }
 
-void CastRay(SimulationState &state, const Ray &ray, Colour *colour) {
+void CastRay(SimulationState &state, const Ray &ray, int iteration, Colour *colour) {
 	Intersection intersection;
 	if (FindIntersection(state, ray, &intersection)) {
-		ColourForIntersection(state, intersection, ray, colour);
+		ColourForIntersection(state, intersection, ray, iteration, colour);
 	} else {
 		colour->r = 0.0f;
 		colour->g = 0.0f;
@@ -218,11 +216,6 @@ Colour TraceArea(SimulationState &state, const Point3 &center, double size, int 
 	Vector3 dir3 = (p_world3 - state.eye);
 	Vector3 dir4 = (p_world4 - state.eye);
 	Vector3 dir5 = (p_world5 - state.eye);
-	dir1.normalize();
-	dir2.normalize();
-	dir3.normalize();
-	dir4.normalize();
-	dir5.normalize();
 
 	Ray ray1(state.eye, dir1);
 	Ray ray2(state.eye, dir2);
@@ -231,15 +224,15 @@ Colour TraceArea(SimulationState &state, const Point3 &center, double size, int 
 	Ray ray5(state.eye, dir5);
 
 	Colour colour1;
-	CastRay(state, ray1, &colour1);
+	CastRay(state, ray1, 1, &colour1);
 	Colour colour2;
-	CastRay(state, ray2, &colour2);
+	CastRay(state, ray2, 1, &colour2);
 	Colour colour3;
-	CastRay(state, ray3, &colour3);
+	CastRay(state, ray3, 1, &colour3);
 	Colour colour4;
-	CastRay(state, ray4, &colour4);
+	CastRay(state, ray4, 1, &colour4);
 	Colour colour5;
-	CastRay(state, ray5, &colour5);
+	CastRay(state, ray5, 1, &colour5);
 
 	Colour diff_col1 = colour1 - colour5;
 	Colour diff_col2 = colour2 - colour5;
@@ -276,26 +269,26 @@ void TracePixel(SimulationState &state, const Point3 &pixel, double size, Image 
 	image->data[index + 2] = colour.b;
 }
 
-void TraceRect(SimulationState &state, unsigned int x, unsigned int y, 
-	unsigned int width, unsigned int height, Image *image) {
-	for (unsigned int c = 0; c < width; ++c) {
-		for (unsigned int r = 0; r < height; ++r) {
-			TracePixel(state, { (float)(c + x) + 0.5, (float)(r + y) + 0.5, 0.0f }, 1, image); // TODO(orglofch): Possibly add 0.5 to pixel
-			//boost::this_thread::sleep(boost::posix_time::milliseconds(1));
-		}
+void TraceRect(SimulationState &state, const vector<Point3> &pixel_pool, Image *image) {
+	for (const Point3 &p : pixel_pool) {
+		TracePixel(state, p, 1, image); 
 	}
 }
 
 void Trace(SimulationState &state, Image *image) {
-	int thread_space_width = image->width / state.thread_space_divisions;
-	int thread_space_height = image->height / state.thread_space_divisions;
-
-	boost::thread_group trace_threads;
-	for (unsigned int c = 0; c < state.thread_space_divisions; ++c) {
-		for (unsigned int r = 0; r < state.thread_space_divisions; ++r) {
-			boost::thread *worker_thread = new boost::thread(TraceRect, state, c * thread_space_width, r * thread_space_height, thread_space_width, thread_space_height, image);
-			trace_threads.add_thread(worker_thread);
+	vector<vector<Point3> > thread_pixel_pools(state.trace_thread_count);
+	for (unsigned int c = 0; c < image->width; ++c) {
+		for (unsigned int r = 0; r < image->height; ++r) {
+			int thread = rand() % state.trace_thread_count;
+			// TODO(orglofch): Possibly remove 0.5 from pixel
+			thread_pixel_pools[thread].push_back(Point3(c + 0.5, r + 0.5, 0.0));
 		}
+	}
+	boost::thread_group trace_threads;
+	for (int i = 0; i < state.trace_thread_count; ++i) {
+		random_shuffle(thread_pixel_pools[i].begin(), thread_pixel_pools[i].end());
+		boost::thread *worker_thread = new boost::thread(TraceRect, state, thread_pixel_pools[i], image);
+		trace_threads.add_thread(worker_thread);
 	}
 	trace_threads.join_all();
 }
@@ -323,10 +316,10 @@ int main(int argc, char **argv) {
 	state.fov = 50;
 	state.ambient = { 0.3f, 0.3f, 0.3f };
 
-	state.thread_space_divisions = 10;
+	state.trace_thread_count = 8;
 
-	state.max_aa_iterations = 4;
-	state.max_reflection_iterations = 4;
+	state.max_aa_iterations = 1;
+	state.max_reflection_iterations = 3;
 
 	state.light[0].pos = { -100, 150, 400 };
 	state.light[0].colour = { 0.9f, 0.9f, 0.9f };
@@ -428,9 +421,6 @@ int main(int argc, char **argv) {
 		UpdateAndRender(state, image, glfwGetTime() - time);
 
 		glfwSwapBuffers(window);
-
-		while (glfwGetTime() - time < 1.0f / 60) {};
-		time = glfwGetTime();
 	}
 
 	worker_thread.join();
