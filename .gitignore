@@ -4,8 +4,8 @@
 *.sln
 *.vcxproj
 *.vcxproj.filters
-.vsp
-.psess
+*.vsp
+*.psess
 Debug/*
 Release/*
 Raytracer/Debug/*
