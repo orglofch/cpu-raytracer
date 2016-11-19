@@ -1,7 +1,7 @@
 Raytracer
 ============
 
-A simple raytracer which supports reflections and parallel-processing.
+A simple raytracer which supports reflections, stochastic sampling and parallel-processing.
 
 Language: C++
 
